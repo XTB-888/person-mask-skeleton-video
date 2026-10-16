@@ -1,0 +1,19 @@
+# GPU 环境（COMFY_PY）—— BiRefNet 人物分割必须用这个
+# torch + CUDA 是核心；ComfyUI portable python 已自带 torch
+# 若用系统 Python / conda 自行安装，按下方对应 CUDA 版本来
+
+# ---- PyTorch（必须匹配本机 NVIDIA 驱动的 CUDA 版本）----
+# CUDA 12.1（最常见）:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# CUDA 11.8（旧驱动）:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# 仅 CPU（不推荐，BiRefNet 会慢得无法使用）:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+# ---- 分割模型 ----
+transformers>=4.40.0
+Pillow>=10.0.0
+opencv-python>=4.8.0
+
+# ---- HuggingFace 下载 ----
+huggingface-hub>=0.20.0

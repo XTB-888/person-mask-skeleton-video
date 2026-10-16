@@ -1,0 +1,32 @@
+# ===== Python 缓存 =====
+__pycache__/
+*.pyc
+*.pyo
+
+# ===== 运行产物 =====
+*_out/
+*.npy
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.gif
+
+# ===== 用户本地覆盖 =====
+.env
+.local_config.py
+config.local.py
+
+# ===== 模型下载缓存（不提交大文件）=====
+models/
+*.onnx
+*.pth
+*.pt
+*.safetensors
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

@@ -1,0 +1,16 @@
+# CPU 环境（BLENDER_PY）—— DWPose 骨架检测 + 叠加合成
+# Blender 内置 Python 已自带 opencv + numpy，只需 onnxruntime
+
+# ---- DWPose 骨架 ----
+onnxruntime>=1.16.0
+# 有 GPU 可用 onnxruntime-gpu（可选，默认 CPU 也够用）
+# onnxruntime-gpu>=1.16.0
+
+# ---- 视频合成 ----
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# ---- 纯 CPU 模式下可选：用 torch CPU 跑 BiRefNet 分割（极慢，仅应急）----
+# torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# transformers>=4.40.0
+# Pillow>=10.0.0
