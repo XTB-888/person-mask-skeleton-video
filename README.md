@@ -1,262 +1,243 @@
 # person-mask-skeleton-video
 
-把一段普通视频处理成「**人物白色剪影 + 彩色姿态骨架**」的叠加视频，整条流水线可复用：
+> 一键把普通视频变成「**人物白色剪影 + 彩色姿态骨架**」的叠加视频，支持按秒分段、双背景模式、朝向识别、独立音轨。
+
+## 效果说明
+
+整条流水线自动完成：
 
 ```
-BiRefNet 人物分割 (GPU)  →  全片白色剪影 mask
-DWPose   骨架检测 (CPU)  →  全片彩色骨架
-像素级叠加 + 按秒分段 + 双背景模式 + 独立音轨
+BiRefNet 人物分割 (GPU)   →  全片白色人物剪影（黑底）
+DWPose   骨架检测 (CPU)   →  全片彩色骨架（黑底）
+像素级叠加 + 按秒分段 + 双背景模式 + 音轨混入
 ```
 
-最终产出两种版本：
-- **black** 纯黑底版：人物白剪影 + 彩色骨架
-- **background** 保留原背景版：剪影/骨架覆盖在原视频上
+产出两种版本（可全要、也可只选其一）：
 
-另外默认开启**人物朝向识别**（正对 / 左侧身 / 右侧身 / 背对），骨架上自动叠加朝向箭头和角度标签。
+| 模式 | 效果 | 适用 |
+|------|------|------|
+| **black** | 纯黑底 + 白色剪影 + 彩色骨架 | 喂给 AI 视频生成/重绘模型做动作参考 |
+| **background** | 在原视频画面上覆盖剪影/骨架 | 人眼检查动作识别精度 |
 
----
-
-## 效果预览
-
-（建议放 GIF 演示）
+**默认开启人物朝向识别**：骨架上自动叠加朝向箭头 + 标签（正面 / 左侧身 / 右侧身 / 背面），方便 AI 二次生成时理解人物转身。
 
 ---
 
-## 为什么需要两个 Python 环境？
+## 快速开始（Windows）
 
-| 环境 | 解释器 | 负责 | 必须的依赖 |
-|------|--------|------|-----------|
-| **GPU 环境** (COMFY_PY) | 带 CUDA 的 torch | BiRefNet 分割（GPU 推理才快） | `torch` + CUDA / `transformers` / `Pillow` |
-| **CPU 环境** (BLENDER_PY) | 任意 Python | DWPose 骨架 + 叠加合成 | `onnxruntime` / `opencv-python` / `numpy` |
+### 一键运行
 
-**这两步可以并行跑，也可以在同一台机器上用两个解释器。** 最省事的组合：
-- GPU 环境 = **ComfyUI_windows_portable**（已自带 torch + CUDA，下载即用）
-- CPU 环境 = **Blender 内置 Python**（已自带 opencv + numpy，只需 pip install onnxruntime）
+```powershell
+# 用 CPU 解释器跑主控脚本即可，它会自动调用 GPU 解释器
+& "C:\path\to\your\python.exe" src\run.py --input "你的视频.mp4"
+```
 
-如果你只有一套 Python，也可以：
-- 把两套依赖装到同一个 conda venv（需要该 Python 同时能跑 torch CUDA 和 onnxruntime）
-- 或设 `PMSV_SAME_PY=1` 让两个步骤都用同一个解释器（BiRefNet 会自动 fallback 到 CPU，极慢但应急可用）
+> `config.py` 会自动探测本机常见安装位置（ComfyUI / Blender / WinGet 的 ffmpeg / controlnet_aux 的 ONNX 模型）。
+> 探测不到时会给出明确提示，告诉你装什么、或怎么设环境变量（`PMSV_*` 前缀）。
+
+### 输出示例
+
+假设输入 `下载.mp4`、时长 9 秒（未触发分段）：
+
+```
+下载_out/
+├── 下载_seg01_black_sound.mp4       # 黑底剪影骨架 + 原音轨
+├── 下载_seg01_background_sound.mp4  # 保留背景 + 原音轨
+├── 下载_mask.mp4                    # 中间产物：BiRefNet 剪影（可复用）
+├── 下载_pose.mp4                    # 中间产物：DWPose 骨架（可复用）
+└── 下载_kp.npy                      # 中间产物：关键点数据（供朝向识别）
+```
 
 ---
 
-## 安装步骤
+## 安装
 
-### 1. GPU 环境（BiRefNet 分割）
+### 为什么需要两个 Python 环境？
 
-**方案 A：ComfyUI_windows_portable（Windows 推荐）**
-1. 下载 [ComfyUI release](https://github.com/comfyanonymous/ComfyUI/releases) （带 `portable` 字样的 zip）
-2. 解压到任意盘（如 `D:\ComfyUI_windows_portable`）
-3. 无需额外安装 torch，已自带
-4. 安装 transformers：
+| 环境 | 用途 | 关键依赖 |
+|------|------|---------|
+| **GPU 环境** `COMFY_PY` | BiRefNet 人物分割 | torch + CUDA + transformers |
+| **CPU 环境** `BLENDER_PY` | DWPose 骨架 + 像素合成 | onnxruntime + opencv + numpy |
+
+> 拆开的原因：torch CUDA 和 onnxruntime 在同一环境里容易争抢显存。
+> 实在只有一个 Python 也行：把两套依赖都装上，然后把 `PMSV_COMFY_PY` 和 `PMSV_BLENDER_PY` 设成同一个解释器（BiRefNet 仍走 GPU，DWPose 走 CPU）。
+
+### 步骤 1：装 GPU 环境（BiRefNet）
+
+**方案 A：ComfyUI_windows_portable（最省事，Windows 推荐）**
+
+1. 到 https://github.com/comfyanonymous/ComfyUI/releases 下载带 `portable` 的 zip
+2. 解压（例：`D:\ComfyUI_windows_portable`）
+3. 补装分割模型依赖：
    ```powershell
    & "D:\ComfyUI_windows_portable\python_embeded\python.exe" -m pip install transformers Pillow huggingface-hub
    ```
 
-**方案 B：conda（Linux/macOS/想要 GPU 但不想装 ComfyUI）**
+**方案 B：conda（任意平台）**
+
 ```bash
 conda create -n pmsv-gpu python=3.12
 conda activate pmsv-gpu
-# CUDA 12.1（最常见 NVIDIA 驱动）
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-# CUDA 11.8（旧驱动）
-# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 pip install transformers Pillow huggingface-hub opencv-python
 ```
 
-### 2. CPU 环境（DWPose 骨架 + 合成）
+### 步骤 2：装 CPU 环境（DWPose + 合成）
 
-**方案 A：Blender（推荐，内置完整 Python）**
-1. 下载 [Blender](https://www.blender.org/download/)
-2. 安装后，找内置 Python 路径（Windows 例：`C:\Program Files\Blender Foundation\Blender 5.2\python\bin\python.exe`）
-3. 安装 onnxruntime：
+**方案 A：Blender 内置 Python（推荐，自带 opencv/numpy）**
+
+1. 到 https://www.blender.org/download/ 下载并安装 Blender
+2. 找内置 Python 路径（Windows 例：`C:\Program Files\Blender Foundation\Blender 5.2\python\bin\python.exe`）
+3. 补装 onnxruntime：
    ```powershell
    & "C:\Program Files\Blender Foundation\Blender 5.2\python\bin\python.exe" -m pip install onnxruntime
    ```
-   （opencv / numpy / pip Blender 内置 Python 已自带）
 
 **方案 B：系统 Python / conda**
+
 ```bash
 pip install onnxruntime opencv-python numpy
 ```
 
-### 3. FFmpeg
+### 步骤 3：装 FFmpeg
 
-- **Windows（推荐 WinGet）：**
-  ```powershell
-  winget install Gyan.FFmpeg.Essentials
-  # 关闭终端再开，ffmpeg / ffprobe 会进 PATH
-  ```
-- **Linux：** `sudo apt install ffmpeg`
-- **macOS：** `brew install ffmpeg`
+- Windows：`winget install Gyan.FFmpeg.Essentials`
+- Linux：`sudo apt install ffmpeg`
+- macOS：`brew install ffmpeg`
 
-### 4. DWPose ONNX 模型文件
+### 步骤 4：准备模型文件
 
-需要两个 `.onnx` 文件：
-- `yolox_l.onnx` （检测器）
-- `dw-ll_ucoco_384.onnx` （姿态模型）
+| 模型 | 来源 | 大小 |
+|------|------|------|
+| BiRefNet（分割） | HuggingFace 首次运行时自动下载 `ZhengPeng7/BiRefNet-portrait` | ~200MB |
+| DWPose 检测器 `yolox_l.onnx` | ComfyUI ControlNet Aux 插件自动下载，或 https://huggingface.co/yzd-v/DWPose | ~200MB |
+| DWPose 姿态 `dw-ll_ucoco_384.onnx` | 同上 | ~350MB |
 
-最省事：**先装好 ComfyUI + ComfyUI ControlNet Aux 节点**（ComfyUI Manager 搜 `comfyui-controlnet-aux`），插件会自动下载这两个文件。然后本项目会自动搜索其位置。
+国内网络下载 HuggingFace 慢时：
 
-手动下载链接（如不想装 ComfyUI）：
-- https://huggingface.co/yzd-v/DWPose/tree/main
-
-### 5. BiRefNet（HuggingFace，自动下载）
-
-首次运行时会自动从 HuggingFace 下载约 200MB 的模型权重到本地缓存。需保证网络通畅（或设置 `HF_ENDPOINT=https://hf-mirror.com` 使用国内镜像）。
-
----
-
-## 快速开始
-
-```powershell
-# 1) 克隆 & 进入项目
-git clone https://github.com/<your-user>/person-mask-skeleton-video.git
-cd person-mask-skeleton-video
-
-# 2) 确认两个解释器能被找到（config.py 会自动探测常见安装路径）
-# 如果探测不到，用环境变量显式指定（前缀 PMSV_）：
-$env:PMSV_COMFY_PY  = "D:\ComfyUI_windows_portable\python_embeded\python.exe"
-$env:PMSV_BLENDER_PY = "C:\Program Files\Blender Foundation\Blender 5.2\python\bin\python.exe"
-# ONNX 模型也可显式指定：
-$env:PMSV_DET_PATH  = "D:\ComfyUI_windows_portable\ComfyUI\custom_nodes\comfyui_controlnet_aux\ckpts\yzd-v\DWPose\yolox_l.onnx"
-$env:PMSV_POSE_PATH = "D:\ComfyUI_windows_portable\ComfyUI\custom_nodes\comfyui_controlnet_aux\ckpts\yzd-v\DWPose\dw-ll_ucoco_384.onnx"
-
-# 3) 一键处理（用 CPU 环境跑主控脚本）
-& $env:PMSV_BLENDER_PY "src\run.py" --input "C:\your\video.mp4"
-```
-
-输出到 `<视频名>_out/`：
-```
-<视频名>_seg01_black_sound.mp4       # 纯黑底 + 原音轨
-<视频名>_seg01_background_sound.mp4  # 保留原背景 + 原音轨
-<视频名>_mask.mp4                    # 中间：BiRefNet 剪影
-<视频名>_pose.mp4                    # 中间：DWPose 骨架
-```
-
-### 全量参数示例
-
-```powershell
-# 两种背景都要、按 14 秒分段、开启剪影补全 + 边缘外扩 + 人体轮廓描边
-& $env:PMSV_BLENDER_PY "src\run.py" --input SRC.mp4 --bg both --split 14 --fill-mask --dilate 3 --edge
-
-# 复用已有 mask / pose 层（调参数重跑叠加最快）
-& $env:PMSV_BLENDER_PY "src\run.py" --input SRC.mp4 --reuse-mask OUT/mask.mp4 --reuse-pose OUT/pose.mp4
-
-# 关闭朝向识别（输出干净骨架，适合喂给视频生成模型二次创作）
-& $env:PMSV_BLENDER_PY "src\run.py" --input SRC.mp4 --no-orientation
-
-# 多人物视频：给每个人稳定身份色（可选，默认关闭）
-& $env:PMSV_BLENDER_PY "src\run.py" --input SRC.mp4 --numbers
-```
-
----
-
-## 环境变量参考（全部可选）
-
-| 变量 | 说明 | 自动探测 |
-|------|------|---------|
-| `PMSV_COMFY_PY` | GPU Python (torch+CUDA) | ✅ 搜索 ComfyUI / 系统 PATH |
-| `PMSV_BLENDER_PY` | CPU Python (onnxruntime+cv2) | ✅ 搜索 Blender / 系统 PATH |
-| `PMSV_FFMPEG` | ffmpeg.exe | ✅ 搜索 PATH / WinGet |
-| `PMSV_FFPROBE` | ffprobe.exe | ✅ 默认从 FFMPEG 路径替换 |
-| `PMSV_DET_PATH` | DWPose yolox_l.onnx | ✅ 搜索 ComfyUI ckpts |
-| `PMSV_POSE_PATH` | DWPose dw-ll_ucoco_384.onnx | ✅ 搜索 ComfyUI ckpts |
-| `PMSV_BIRENET_MODEL` | BiRefNet 模型名 | 默认 `ZhengPeng7/BiRefNet-portrait` |
-| `PMSV_SPLIT` | 分段秒数（0=不拆） | 默认 14.0 |
-| `PMSV_SEG_SIZE` | BiRefNet 输入尺寸 | 默认 512（1024 更精细） |
-| `PMSV_QUIET` | 静默 config 打印 | 设 1 关闭启动信息 |
-
----
-
-## 命令行参数（run.py 全表）
-
-```
---input            源视频路径（必填）
---outdir           输出目录（默认 <源视频同目录>_out）
---bg               背景模式: black / background / both (默认 both)
---split            分段秒数，0=不拆（默认 14，可用 0 关闭）
---seg              BiRefNet 分割尺寸（默认 512；1024 更精细但慢 2-3 倍）
---reuse-mask       复用已有 mask 视频，跳过分割
---reuse-pose       复用已有骨架视频，跳过骨架
---only-overlay     只跑叠加（需同时提供 --reuse-mask + --reuse-pose）
---no-audio         不混入原音轨
---no-orientation   关闭朝向识别预览层（默认开启）
---numbers          多人物稳定身份色（默认关闭）
---fill-mask        对空白剪影帧做时间补全
---dilate           剪影边缘外扩像素（配合 --fill-mask，默认 3）
---edge             给人物边缘画轮廓描边
---edge-color       轮廓描边颜色 RGB（默认浅灰 235,235,235）
-```
-
----
-
-## 性能参考（参考配置：Quadro P2000 5GB GPU / 30fps / 竖屏 1080×1920）
-
-| 步骤 | 速度 | 耗时估算 | 说明 |
-|------|------|---------|------|
-| BiRefNet (SEG=512) | ~1.25 fps | 9.3s 视频 ≈ 3.7min | GPU 关键；SEG=1024 慢 2-3x 但发丝/手指更准 |
-| DWPose (CPU) | ~2.5 fps | 9.3s 视频 ≈ 1.9min | 全片 CPU 可接受；onnxruntime-gpu 会更快 |
-| 叠加 + 分段 + 音轨 | 快 | 9.3s 视频 ≈ 30s | 瓶颈不在这步 |
-
-**单帧处理时间 ≈ 0.8s (GPU) + 0.4s (CPU)**
-
----
-
-## 常见问题排查
-
-**Q: `config.py` 启动就报错"未找到 GPU Python"？**
-A: 自动探测只扫了常见路径。确认一下你 GPU Python 的实际位置，然后设：
-```powershell
-$env:PMSV_COMFY_PY = "D:\实际\路径\python.exe"
-```
-
-**Q: BiRefNet 卡在"未检测到 CUDA，速度会非常慢"？**
-A: 说明用的是 CPU 解释器跑分割了。确认 `COMFY_PY` 指向的 Python 里 `import torch; torch.cuda.is_available()` 返回 `True`。ComfyUI portable python 自带正确的 torch CUDA。
-
-**Q: DWPose 报找不到 onnxruntime？**
-A: 对 Blender 内置 Python 执行一次：
-```powershell
-& "C:\...python.exe" -m pip install onnxruntime
-```
-Blender 内置 pip 默认源有时失效，加 `-i https://pypi.tuna.tsinghua.edu.cn/simple` 换国内镜像。
-
-**Q: HuggingFace 下载 BiRefNet 模型慢/失败？**
-A: 设镜像：
 ```powershell
 $env:HF_ENDPOINT = "https://hf-mirror.com"
 ```
 
-**Q: BiRefNet 某些帧剪影空白（人物动起来就消失）？**
-A: 开 `--fill-mask --dilate 3`。脚本会用前后有效剪影插值填补空白帧并外扩边缘。
+---
 
-**Q: 两个 Python 环境能合并成一个吗？**
-A: 技术上可行（装一套 Python 同时带 torch CUDA + onnxruntime），但 onnxruntime 在有 CUDA 的 torch 环境下容易跟 torch 抢 GPU 显存。建议还是分两个解释器。
+## 命令行参数
 
-**Q: 只有一套 Python，不想装 ComfyUI 也不想装 Blender？**
-A: 把所有依赖装到同一个 conda venv，然后设 `PMSV_COMFY_PY` 和 `PMSV_BLENDER_PY` 都指向这个 venv 的 python（两个步骤都能跑，BiRefNet 用 GPU，DWPose 用 CPU）。
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `--input` | （必填） | 源视频路径 |
+| `--outdir` | `<视频名>_out` | 输出目录 |
+| `--bg` | `both` | 背景模式：`black` / `background` / `both` |
+| `--split` | 14.0 | 超过此秒数自动分段；`0` = 不拆 |
+| `--seg` | 512 | BiRefNet 分割尺寸；`1024` 更精细但慢 2-3 倍 |
+| `--reuse-mask` | 无 | 复用已有 mask 视频，跳过分割 |
+| `--reuse-pose` | 无 | 复用已有骨架，跳过检测 |
+| `--only-overlay` | 关 | 只跑合成（需同时给 `--reuse-mask` 和 `--reuse-pose`） |
+| `--no-audio` | 关 | 不混入原音轨 |
+| `--no-orientation` | 关 | 关闭朝向识别（输出干净骨架，适合二次生成） |
+| `--numbers` | 关 | 多人物稳定身份色（区分多个人物） |
+| `--fill-mask` | 关 | 空白剪影帧时间补全（解决动作快时剪影闪烁） |
+| `--dilate` | 3 | 剪影边缘外扩像素（配合 `--fill-mask`） |
+| `--edge` | 关 | 给人物剪影画轮廓描边 |
+| `--edge-color` | `235,235,235` | 描边颜色 RGB |
+
+### 常用命令示例
+
+```powershell
+# 标准一键处理
+python src\run.py --input SRC.mp4
+
+# 高精度（发丝/手指更准，但慢 2-3 倍）
+python src\run.py --input SRC.mp4 --seg 1024
+
+# 动作快导致剪影闪烁 → 时间补全 + 外扩
+python src\run.py --input SRC.mp4 --fill-mask --dilate 3
+
+# 喂给 AI 视频生成模型 → 干净骨架（无朝向文字）
+python src\run.py --input SRC.mp4 --no-orientation
+
+# 多人视频 → 给每个人分配身份色圆点
+python src\run.py --input SRC.mp4 --numbers
+
+# 复用已有 mask/pose 改参数重跑合成（最快）
+python src\run.py --input SRC.mp4 --reuse-mask OUT/mask.mp4 --reuse-pose OUT/pose.mp4
+```
 
 ---
 
-## 目录结构
+## 环境变量（全部可选）
+
+| 变量 | 说明 |
+|------|------|
+| `PMSV_COMFY_PY` | GPU Python 路径（torch + CUDA） |
+| `PMSV_BLENDER_PY` | CPU Python 路径（onnxruntime + cv2） |
+| `PMSV_FFMPEG` / `PMSV_FFPROBE` | ffmpeg / ffprobe 路径 |
+| `PMSV_DET_PATH` / `PMSV_POSE_PATH` | DWPose 两个 ONNX 模型路径 |
+| `PMSV_BIRENET_MODEL` | BiRefNet HuggingFace 模型名（默认 `ZhengPeng7/BiRefNet-portrait`） |
+| `PMSV_SPLIT` | 分段秒数（默认 14） |
+| `PMSV_SEG_SIZE` | BiRefNet 输入尺寸（默认 512） |
+| `PMSV_HF_OFFLINE` | 设 `1` 强制离线模式（已缓存完模型可加速启动） |
+| `PMSV_QUIET` | 设 `1` 关闭 config 启动时的探测信息打印 |
+
+---
+
+## 性能参考（Quadro P2000 5GB GPU / 1080×1920 @ 30fps）
+
+| 步骤 | 速度 | 9.3 秒视频耗时 |
+|------|------|---------------|
+| BiRefNet（SEG=512） | ~1.25 fps | ≈ 3.7 分钟 |
+| DWPose（CPU） | ~2.5 fps | ≈ 1.9 分钟 |
+| 叠加 + 分段 + 音轨 | 快 | ≈ 30 秒 |
+
+**显存提示**：5GB GPU 用 `SEG_SIZE=512` 是平衡点；`1024` 可显著提升发丝/手指精度但耗时 2-3 倍。
+
+---
+
+## 常见问题
+
+**Q: 启动时报"未找到 GPU Python"？**
+A: 自动探测没扫到你的环境。手动设：
+```powershell
+$env:PMSV_COMFY_PY = "D:\你的\路径\python.exe"
+```
+
+**Q: BiRefNet 报"未检测到 CUDA"？**
+A: 说明用了 CPU 解释器跑分割。确认 `PMSV_COMFY_PY` 指向的 Python 里 `torch.cuda.is_available()` 返回 `True`。
+
+**Q: DWPose 报找不到 onnxruntime？**
+A: 对 CPU 解释器装一下：
+```powershell
+& "C:\你的\python.exe" -m pip install onnxruntime
+```
+
+**Q: 人物动作快时剪影闪没？**
+A: 加 `--fill-mask --dilate 3`，前后有效剪影会插值填补空白帧。
+
+**Q: 想用同一套 Python？**
+A: 把 `torch(CUDA) + transformers + onnxruntime + opencv` 全装一个 venv 里，然后把 `PMSV_COMFY_PY` 和 `PMSV_BLENDER_PY` 设成同一个解释器。
+
+---
+
+## 项目结构
 
 ```
 person-mask-skeleton-video/
 ├── src/
-│   ├── config.py           # 通用配置（环境变量 + 自动探测）
-│   ├── run.py              # 主控编排：一键处理全流程
-│   ├── mask_gpu.py         # 步骤1: BiRefNet 人物分割 (GPU)
-│   ├── pose_dwpose.py      # 步骤2: DWPose 骨架检测 (CPU, 可选导出关键点)
-│   ├── overlay_seg.py      # 步骤3: 像素叠加 + 分段 + 双背景 + 音轨
-│   ├── mask_fill.py        # 可选: 空白剪影帧时间补全
-│   └── orientation_overlay.py  # 朝向预览层（已集成进 overlay_seg，保留作独立工具）
-├── requirements-gpu.txt    # GPU 环境依赖
-├── requirements-cpu.txt    # CPU 环境依赖
+│   ├── config.py                # 通用配置（环境变量 + 自动探测）
+│   ├── run.py                   # 主控：一键处理全流程
+│   ├── mask_gpu.py              # 步骤1: BiRefNet 人物分割 (GPU)
+│   ├── pose_dwpose.py           # 步骤2: DWPose 骨架检测 (CPU)
+│   ├── overlay_seg.py           # 步骤3: 像素叠加 + 分段 + 双背景 + 音轨
+│   ├── mask_fill.py             # 可选: 空白剪影帧时间补全
+│   └── orientation_overlay.py   # 朝向预览层独立工具
+├── requirements-gpu.txt         # GPU 环境依赖
+├── requirements-cpu.txt         # CPU 环境依赖
 ├── .gitignore
 └── README.md
 ```
 
 ---
 
-## License
+## 许可证
 
 MIT
